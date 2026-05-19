@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "@nestjs/mongoose": "^11.0.4",
+    "@nestjs/swagger": "^11.4.2",
+    "apexcharts": "^5.11.0",
+    "mongoose": "^9.6.1",
+    "vue3-apexcharts": "^1.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0"
+  }
+}
