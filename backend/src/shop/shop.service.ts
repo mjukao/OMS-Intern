@@ -75,6 +75,7 @@ export class ShopService {
       if (!map.has(key)) {
         map.set(key, {
           receiver,
+          shippingAddress: order.shippingAddress,
           orderCount: 0,
           totalSpent: 0,
           orders: [],
@@ -89,6 +90,7 @@ export class ShopService {
         shopName: shop?.name,
         status: order.status,
         totalAmount: order.totalAmount,
+        shippingAddress: order.shippingAddress,
         createdAt: order.createdAt,
       });
     }
