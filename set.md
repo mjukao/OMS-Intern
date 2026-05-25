@@ -397,6 +397,56 @@ PATCH /api/orders/:id/cancel
 
 ---
 
+## 📄 หน้าเว็บทั้งหมด (Views) — ทำอะไร?
+
+### 1. **LoginView.vue** (`/login`)
+หน้าเข้าสู่ระบบ → ฟอร์ม email+password → กด Login → Backend ตรวจสอบ → ได้ token → redirect /shops
+
+### 2. **AuthCallbackView.vue** (`/auth/callback`)
+หน้ารับ token จาก Google OAuth → Google ส่ง code → ส่งไป Backend → ได้ token → redirect /shops
+
+### 3. **ShopView.vue** (`/shops`)
+หน้ารายการร้านค้า → แสดงตาราง/card ร้าน → Click ชื่อ → ไปหน้า /shops/:id
+- Features: สร้าง/แก้/ลบร้าน, ค้นหา
+- ฟิลด์: shopForm { name, phone, address{}, description }
+
+### 4. **ShopLayout.vue** (ไม่มี routing ตรง)
+Layout ที่ซ้อน router view → แสดง Header ชื่อร้าน → Menu (สินค้า/คำสั่งซื้อ/ลูกค้า/สร้างคำสั่งซื้อ)
+
+### 5. **ShopProductsView.vue** (`/shops/:id`)
+หน้าสินค้าของร้าน → แสดงตาราง/card สินค้า → Click [แก้ไข] → Modal
+- Features: เพิ่ม/แก้/ลบสินค้า, ค้นหา
+- ฟิลด์: productForm { name, description, price, stock, isActive }
+
+### 6. **ShopOrdersView.vue** (`/shops/:id/orders`)
+หน้าคำสั่งซื้อของร้าน → ตาราง Order → Click [ดูบิล] → Modal
+- Features: Filter by status, ดูบิล, เปลี่ยน status, ยกเลิก
+- Logic: countOrders, sumSpent, cancelledCount
+
+### 7. **ShopCreateOrderView.vue** (`/shops/:id/orders/create`)
+หน้าสร้างคำสั่งซื้อ (3 ขั้น)
+- STEP 1: กรอกผู้รับ + ที่อยู่ (5 ฟิลด์)
+- STEP 2: เลือกสินค้า + ปรับ qty
+- STEP 3: เลือกวิธีชำระเงิน + ยืนยัน
+- ฟิลด์: recipient, shippingAddr, orderItems, paymentMethod
+
+### 8. **CustumersView.vue** (`/shops/:id/customers` หรือ `/customers`)
+หน้ารายชื่อลูกค้า → ตาราง/card ลูกค้า → Click ชื่อ → Expand แสดงรายละเอียด
+- Logic: Group customer by name|phone, countOrders, sumSpent, cancelledCount
+- Expand section: ข้อมูลลูกค้า + ออเดอร์
+
+### 9. **ProfileView.vue** (`/profile`)
+หน้าโปรไฟล์ → 3 ส่วน
+- ส่วน 1: ข้อมูล User (Avatar, ชื่อ, Email, Role - ดูเท่านั้น)
+- ส่วน 2: ข้อมูลส่วนตัว (เบอร์โทร - แก้ได้)
+- ส่วน 3: ที่อยู่จัดส่ง (เพิ่ม/แก้/ลบ/ตั้ง default)
+- ฟิลด์: profileForm { phone }, addrForm { label, fullName, phone, address{}, isDefault }
+
+### 10. **DashboardView.vue** (ยังไม่ใช้)
+หน้าแดชบอร์ด → อยู่ในโปรเจ็ค แต่ยังไม่มี routing ชี้มา
+
+---
+
 ## Flow การทำงานทั้งระบบ — ทีละขั้น
 
 ### สถานการณ์ 1: User เปิดเว็บครั้งแรก

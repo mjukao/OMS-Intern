@@ -1,580 +1,663 @@
-# สรุป Flow การทำงานของระบบ (Backend + Frontend)
+# คู่มือระบบ OMS (Order Management System)
+
+> อ่านตั้งแต่ต้น ไม่ต้องรู้อะไรมาก่อน ก็เข้าใจได้ทั้งระบบ
 
 ---
 
-## ภาพรวมระบบ
+## ภาพรวม ระบบนี้ทำอะไร?
 
-```
-FRONTEND (Vue 3)          HTTP/Axios          BACKEND (NestJS)         MongoDB
-localhost:5173      ←──────────────────→    localhost:3000/api    ←──→  Atlas/Local
-```
-
-| ฝั่ง     | Framework  | Port | State         | HTTP Client |
-|---------|-----------|------|---------------|-------------|
-| Frontend | Vue 3 + TS | 5173 | Pinia         | Axios       |
-| Backend  | NestJS + TS | 3000 | -             | Mongoose    |
+ระบบนี้คือ **ระบบจัดการคำสั่งซื้อ** สำหรับร้านค้า
+- สร้างร้านค้าได้ หลายร้าน
+- เพิ่มสินค้าในแต่ละร้านได้
+- สร้างคำสั่งซื้อ เลือกสินค้า กรอกที่อยู่ผู้รับ เลือกวิธีชำระเงิน
+- ดูบิล แก้สถานะ หรือยกเลิกคำสั่งซื้อได้
+- มีระบบ Login / Register และ Login ด้วย Google
 
 ---
 
-# BACKEND
-
----
-
-## 1. Entry Point — `src/main.ts`
+## โครงสร้างโปรเจกต์
 
 ```
-main.ts
-  └── NestFactory.create(AppModule)   ← สร้างแอป NestJS
-  └── CORS → http://localhost:5173    ← อนุญาติให้ frontend เชื่อมได้
-  └── prefix ทุก route ด้วย /api      ← ทุก route จะเป็น /api/...
-  └── GlobalValidationPipe            ← ตรวจสอบ DTO ทุกตัวอัตโนมัติ
-  └── Swagger UI → /api/docs
-  └── listen port 3000
-```
-
----
-
-## 2. App Module — `src/app.module.ts`
-
-เป็น root ที่รวมทุก module เข้าด้วยกัน
-
-```
-AppModule
-  ├── ConfigModule      → อ่าน .env ทั่วทั้งระบบ
-  ├── MongooseModule    → เชื่อม MongoDB ด้วย MONGO_URI จาก .env
-  ├── AuthModule
-  ├── UsersModule
-  ├── ShopModule
-  └── ProductsModule
+p1/
+├── frontend/          ← หน้าเว็บ (Vue 3)
+│   └── src/
+│       ├── main.ts          ← จุดเริ่มต้น เปิดแอป
+│       ├── App.vue          ← หน้าหลัก มี Navbar
+│       ├── router/          ← กำหนดเส้นทาง URL
+│       ├── stores/          ← เก็บข้อมูลกลาง (Pinia)
+│       ├── views/           ← หน้าต่างๆ
+│       ├── types/           ← กำหนดรูปแบบข้อมูล
+│       └── services/        ← ตัวยิง API
+│
+└── backend/           ← หลังบ้าน (NestJS)
+    └── src/
+        ├── main.ts          ← เปิด Server พอร์ต 3000
+        ├── app.module.ts    ← ลงทะเบียน Module ทั้งหมด
+        ├── auth/            ← Module Login/Register
+        ├── users/           ← Module จัดการผู้ใช้
+        ├── shop/            ← Module ร้านค้า
+        ├── products/        ← Module สินค้า
+        └── order/           ← Module คำสั่งซื้อ
 ```
 
 ---
 
-## 3. Auth Flow — `src/auth/`
+## หน้าเว็บมีอะไรบ้าง (Router)
 
-### โครงสร้างโฟลเดอร์
-```
-auth/
-  ├── auth.module.ts
-  ├── auth.controller.ts
-  ├── auth.service.ts
-  ├── dto/
-  │   ├── login.dto.ts
-  │   └── register.dto.ts
-  ├── strategies/
-  │   ├── local.strategy.ts    ← ตรวจสอบ email/password
-  │   ├── jwt.strategy.ts      ← ตรวจสอบ JWT token
-  │   └── google.strategy.ts   ← Google OAuth
-  └── guards/
-      ├── local.guard.ts
-      ├── jwt.guard.ts
-      └── google.guard.ts
+ไฟล์: `frontend/src/router/index.ts`
+
+| URL | หน้าที่แสดง | ต้อง Login? |
+|-----|-------------|-------------|
+| `/` | redirect ไป `/shops` | - |
+| `/login` | หน้า Login | ❌ |
+| `/auth/callback` | รับ token จาก Google | ❌ |
+| `/shops` | รายการร้านค้าทั้งหมด | ✅ |
+| `/shops/:id` | สินค้าของร้านนั้น | ✅ |
+| `/shops/:id/orders` | คำสั่งซื้อของร้านนั้น | ✅ |
+| `/shops/:id/orders/create` | สร้างคำสั่งซื้อ | ✅ |
+| `/orders` | คำสั่งซื้อทั้งหมด | ✅ |
+| `/profile` | โปรไฟล์ผู้ใช้ | ✅ |
+| `/customers` | รายชื่อลูกค้า | ✅ |
+
+**Router Guard** คือ: ทุกครั้งที่เปลี่ยนหน้า ระบบจะเช็คก่อนว่า Login หรือยัง
+ถ้ายังไม่ Login และหน้านั้นต้อง Login → พาไปหน้า `/login` อัตโนมัติ
+
+---
+
+## Pinia Store คืออะไร?
+
+Store คือ **ที่เก็บข้อมูลกลาง** ที่ทุกหน้าเรียกใช้ได้
+แทนที่จะให้แต่ละหน้าดึงข้อมูลเอง ก็ให้ Store จัดการแทน
+
+มี 5 Store:
+
+### 1. `auth.store.ts` — จัดการการ Login
+
+**เก็บ:** token (ใน localStorage), ข้อมูล user ปัจจุบัน
+
+**ฟังก์ชัน:**
+- `login(email, password)` → ยิง POST /api/auth/login → เก็บ token
+- `register(name, email, password)` → ยิง POST /api/auth/register
+- `fetchMe()` → ยิง GET /api/auth/me → ดึงข้อมูล user ปัจจุบัน
+- `logout()` → ลบ token ออกจาก localStorage
+
+### 2. `shop.store.ts` — จัดการร้านค้า
+
+**เก็บ:** รายการร้านค้าทั้งหมด
+
+**ฟังก์ชัน:**
+- `fetchAll(search?)` → ยิง GET /api/shops
+- `createShop(data)` → ยิง POST /api/shops
+- `updateShop(id, data)` → ยิง PATCH /api/shops/:id
+- `removeShop(id)` → ยิง DELETE /api/shops/:id
+
+### 3. `product.store.ts` — จัดการสินค้า
+
+**เก็บ:** รายการสินค้าทั้งหมด
+
+**ฟังก์ชัน:**
+- `fetchAll(search?)` → ยิง GET /api/products
+- `createProduct(data)` → ยิง POST /api/products
+- `updateProduct(id, data)` → ยิง PATCH /api/products/:id
+- `removeProduct(id)` → ยิง DELETE /api/products/:id
+
+### 4. `order.store.ts` — จัดการคำสั่งซื้อ
+
+**เก็บ:** รายการออเดอร์, ออเดอร์ที่กำลังดูอยู่
+
+**ฟังก์ชัน:**
+- `fetchAll({ shopId?, status?, customerId? })` → ยิง GET /api/orders พร้อม filter
+- `createOrder(data)` → ยิง POST /api/orders
+- `updateOrder(id, data)` → ยิง PATCH /api/orders/:id
+- `cancelOrder(id)` → ยิง PATCH /api/orders/:id/cancel
+
+### 5. `user.store.ts` — จัดการโปรไฟล์
+
+**เก็บ:** ข้อมูลโปรไฟล์, รายชื่อลูกค้า
+
+**ฟังก์ชัน:**
+- `fetchProfile()` → ยิง GET /api/users/me
+- `updateProfile(data)` → ยิง PATCH /api/users/me
+- `addAddress(data)` → ยิง POST /api/users/me/addresses
+- `fetchCustomers(shopId)` → ยิง GET /api/shops/:shopId/customers
+
+---
+
+## API Service คืออะไร?
+
+ไฟล์: `frontend/src/services/api.ts`
+
+คือ Axios Instance ที่ตั้งค่าไว้ล่วงหน้า:
+- `baseURL` = `http://localhost:3000/api`
+- ทุก request จะแนบ `Authorization: Bearer <token>` ไปโดยอัตโนมัติ (อ่านจาก localStorage)
+
+ดังนั้นแทนที่จะเขียน:
+```js
+axios.get('http://localhost:3000/api/orders', { headers: { Authorization: 'Bearer ...' } })
 ```
 
-### Register
+เขียนแค่:
+```js
+api.get('/orders')
+```
+
+---
+
+## Backend ทำงานยังไง?
+
+### จุดเริ่มต้น `backend/src/main.ts`
+
+```
+เปิด Server พอร์ต 3000
+URL prefix ทุกอันต้องมี /api นำหน้า
+เปิด CORS รับคำขอจาก http://localhost:5173 (หน้าเว็บ)
+เปิด Validation Pipe (ตรวจ DTO อัตโนมัติ)
+Swagger Docs อยู่ที่ http://localhost:3000/api/docs
+```
+
+### `app.module.ts` — ลงทะเบียน Module
+
+```
+เชื่อมต่อ MongoDB (อ่าน MONGO_URI จาก .env)
+โหลด Module: Auth, Users, Shop, Products, Order
+```
+
+### แต่ละ Module มี 3 ชิ้น
+
+| ชิ้น | หน้าที่ |
+|------|---------|
+| Controller | รับ HTTP Request แล้วส่งต่อให้ Service |
+| Service | Logic ทั้งหมด (คิด คำนวณ บันทึก) |
+| Schema | รูปแบบข้อมูลใน MongoDB |
+
+---
+
+## Module Auth — Login / Register
+
+### Schema (ไม่มี Schema ตรงๆ ใช้ User Schema)
+
+### Controller → Service Flow
+
+**Register:**
 ```
 POST /api/auth/register
-  └── (ไม่มี Guard)
-  └── auth.controller → authService.register(dto)
-        └── bcrypt.hash(password)
-        └── usersService.create(data)
-        └── authService.login(user)  ← auto-login
-              └── JwtService.sign({ sub, email, role })
-              └── return { access_token, user }
+  ↓ { name, email, password }
+  ↓ auth.service.register()
+    ↓ bcrypt.hash(password, 10)  ← เข้ารหัสรหัสผ่าน
+    ↓ users.service.create()     ← บันทึก user ใน DB
+    ↓ auth.service.login()       ← สร้าง JWT token
+  ↓ return { access_token, user }
 ```
 
-### Login
+**Login:**
 ```
 POST /api/auth/login
-  └── @UseGuards(LocalGuard)
-        └── local.strategy.ts
-              └── authService.validateUser(email, password)
-                    └── usersService.findByEmail(email)
-                    └── bcrypt.compare(password, hash)
-              └── return user → req.user
-  └── auth.controller → authService.login(req.user)
-        └── return { access_token, user }
+  ↓ { email, password }
+  ↓ LocalGuard → auth.service.validateUser()
+    ↓ หา user ด้วย email
+    ↓ bcrypt.compare(password, user.password)  ← เทียบรหัสผ่าน
+    ↓ ถ้าไม่ตรง → throw UnauthorizedException
+  ↓ auth.service.login()
+    ↓ สร้าง payload = { sub: userId, email, role }
+    ↓ jwt.sign(payload) → access_token
+  ↓ return { access_token, user: { id, name, email, role, avatar } }
 ```
 
-### Google OAuth
-```
-GET /api/auth/google
-  └── @UseGuards(GoogleGuard)
-        └── google.strategy.ts → redirect ไป Google
-
-GET /api/auth/google/callback
-  └── @UseGuards(GoogleGuard)
-        └── google.strategy.ts
-              └── authService.validateGoogleUser(profile)
-                    └── usersService.findByGoogleId(googleId)
-                    └── ถ้าไม่มี → usersService.create(...)
-        └── auth.controller → redirect frontend?token=xxx
-```
-
-### ดู user ตัวเอง
+**ดึงข้อมูล User ปัจจุบัน:**
 ```
 GET /api/auth/me
-  └── @UseGuards(JwtGuard)
-        └── jwt.strategy.ts
-              └── extract "Authorization: Bearer <token>"
-              └── verify → return { userId, email, role } → req.user
-  └── return req.user
+  ↓ JwtGuard → ตรวจ token ใน Header
+    ↓ ถ้า token ไม่ถูกต้อง → 401 Unauthorized
+  ↓ return req.user (ข้อมูลจาก token)
+```
+
+**Login ด้วย Google:**
+```
+GET /api/auth/google
+  ↓ redirect ไป Google OAuth
+GET /api/auth/google/callback
+  ↓ Google ส่ง profile กลับมา
+  ↓ authService.validateGoogleUser()
+    ↓ หา user ด้วย googleId หรือ email
+    ↓ ถ้าไม่มี → สร้าง user ใหม่
+  ↓ สร้าง token → redirect ไป frontend พร้อม token ใน URL
+```
+
+### User Schema (MongoDB)
+
+```
+users collection:
+  name         string (ต้องมี)
+  email        string (ไม่ซ้ำ, lowercase)
+  password     string (อาจไม่มีถ้า Login ด้วย Google)
+  googleId     string (ไม่ซ้ำ, มีแค่คนที่ Login ด้วย Google)
+  avatar       string (URL รูปโปรไฟล์)
+  role         string (default: 'user')
+  firstName    string
+  lastName     string
+  phone        string
+  addresses    Array ของ Address (ดูด้านล่าง)
+  createdAt    Date
+  updatedAt    Date
+
+Address (ซ้อนอยู่ใน User):
+  _id        ObjectId
+  label      string  (เช่น "บ้าน", "ที่ทำงาน")
+  fullName   string
+  phone      string
+  address    string  (ที่อยู่เต็ม)
+  isDefault  boolean (default: false)
 ```
 
 ---
 
-## 4. Users Module — `src/users/`
+## Module Users — จัดการโปรไฟล์และที่อยู่
+
+ทุก API ต้องแนบ token
 
 ```
-users/
-  ├── users.module.ts      ← exports UsersService ให้ AuthModule ใช้
-  ├── users.service.ts
-  └── schemas/
-      └── user.schema.ts
+GET    /api/users/me                          → ดูโปรไฟล์ตัวเอง
+PATCH  /api/users/me                          → แก้ชื่อ/โทร
+POST   /api/users/me/addresses                → เพิ่มที่อยู่
+PATCH  /api/users/me/addresses/:addrId        → แก้ที่อยู่
+DELETE /api/users/me/addresses/:addrId        → ลบที่อยู่
+PATCH  /api/users/me/addresses/:addrId/default → ตั้งเป็นที่อยู่หลัก
 ```
 
-### MongoDB collection `users`
+**Logic ที่น่าสนใจ:**
+- เพิ่มที่อยู่แรก → ตั้งเป็น default อัตโนมัติ
+- ถ้าตั้ง default ใหม่ → ยกเลิก default เดิมก่อน
+- ถ้าลบที่อยู่ที่เป็น default → ไม่มี default (ต้องตั้งใหม่เอง)
+
+---
+
+## Module Shop — จัดการร้านค้า
+
 ```
-User {
-  name        String (required)
-  email       String (unique, sparse)   ← ว่างได้ถ้า Google login
-  password    String (optional)         ← hash ด้วย bcrypt
-  googleId    String (unique, sparse)   ← มีแค่ Google login
-  avatar      String (optional)
-  role        String (default: 'user')
-  timestamps  createdAt, updatedAt
-}
+POST   /api/shops           → สร้างร้านค้า { name, address, description }
+GET    /api/shops           → ดูร้านค้าทั้งหมด (?search=ชื่อ)
+GET    /api/shops/:id       → ดูร้านค้าชิ้นเดียว
+PATCH  /api/shops/:id       → แก้ไขร้านค้า
+DELETE /api/shops/:id       → ลบร้านค้า
+GET    /api/shops/:id/customers → ดูรายชื่อลูกค้าของร้านนั้น
 ```
 
-### การเชื่อม
+**Shop Schema (MongoDB):**
 ```
-auth.module.ts → imports: [UsersModule]
-                            ↓
-auth.service.ts → constructor(private usersService: UsersService)
+shops collection:
+  name         string (ต้องมี)
+  address      string (ต้องมี)
+  description  string
+```
+
+**getCustomers ทำงานยังไง?**
+
+ใช้ MongoDB Aggregate (รวมข้อมูลจากหลาย collection):
+```
+1. หา Order ทั้งหมดที่มี shop = shopId นั้น
+2. Group by user → นับจำนวน order และรวม totalAmount
+3. Populate ข้อมูล user (name, email, phone)
+4. return รายชื่อลูกค้าพร้อม orderCount, totalSpent, orders[]
 ```
 
 ---
 
-## 5. Shop Module — `src/shop/`
+## Module Products — จัดการสินค้า
 
 ```
-shop/
-  ├── shop.module.ts
-  ├── shop.controller.ts
-  ├── shop.service.ts
-  ├── dto/
-  │   ├── create-shop.dto.ts
-  │   └── update-shop.dto.ts
-  └── schema/
-      └── shop.schema.ts
+POST   /api/products               → สร้างสินค้า
+GET    /api/products               → ดูสินค้าทั้งหมด
+GET    /api/products/shop/:shopId  → ดูสินค้าของร้านนั้น
+GET    /api/products/:id           → ดูสินค้าชิ้นเดียว
+PATCH  /api/products/:id           → แก้ไขสินค้า
+DELETE /api/products/:id           → ลบสินค้า
 ```
 
-### MongoDB collection `shops`
+**Product Schema (MongoDB):**
 ```
-Shop {
-  name         String (required)
-  address      String (required)
-  description  String
-}
-```
-
-### Routes → Service
-```
-POST   /api/shops            → shopService.create(dto)
-GET    /api/shops?search=    → shopService.findAll(search)  ← regex บน name/description
-GET    /api/shops/:id        → shopService.findOne(id)
-PUT    /api/shops/:id        → shopService.update(id, dto)  ← full update
-PATCH  /api/shops/:id        → shopService.update(id, dto)  ← partial update
-DELETE /api/shops/:id        → shopService.delete(id)
+products collection:
+  name         string (ต้องมี)
+  description  string
+  price        number (ต้องมี, ต่ำสุด 0)
+  stock        number (default: 0, ต่ำสุด 0)
+  isActive     boolean (default: true)
+  shop         ObjectId → อ้างอิงไปที่ shops collection
+  createdAt    Date
+  updatedAt    Date
 ```
 
 ---
 
-## 6. Products Module — `src/products/`
+## Module Order — จัดการคำสั่งซื้อ
+
+ทุก API ต้องแนบ token
 
 ```
-products/
-  ├── products.module.ts
-  ├── products.controller.ts
-  ├── products.service.ts
-  ├── dto/
-  │   ├── create-product.dto.ts
-  │   └── update-product.dto.ts
-  └── schemas/
-      └── product.schema.ts
+POST   /api/orders              → สร้างคำสั่งซื้อ
+GET    /api/orders              → ดูคำสั่งซื้อทั้งหมด (?shopId=&status=&customerId=)
+GET    /api/orders/:id          → ดูคำสั่งซื้อชิ้นเดียว
+PATCH  /api/orders/:id          → แก้ status หรือ note
+PATCH  /api/orders/:id/cancel   → ยกเลิกคำสั่งซื้อ
 ```
 
-### MongoDB collection `products`
+**Order Schema (MongoDB):**
 ```
-Product {
-  name         String (required)
-  description  String
-  price        Number (required, min: 0)
-  stock        Number (default: 0)
-  isActive     Boolean (default: true)
-  shop         ObjectId → ref: 'Shop'   ← FK เชื่อมไป collection shops
-  timestamps   createdAt, updatedAt
-}
+orders collection:
+  shop           ObjectId → อ้างอิงไปที่ shops collection
+  user           ObjectId → อ้างอิงไปที่ users collection
+  items          Array ของ OrderItem (ดูด้านล่าง)
+  status         enum: pending / confirmed / shipped / delivered / cancelled
+  totalAmount    number (ต่ำสุด 0)
+  shippingAddress string (ที่อยู่จัดส่ง)
+  note           string (หมายเหตุ เช่น วิธีชำระเงิน)
+  createdAt      Date
+  updatedAt      Date
+
+OrderItem (ซ้อนอยู่ใน Order):
+  product      ObjectId → อ้างอิงไปที่ products collection
+  productName  string (เก็บชื่อสินค้าไว้เลย กันสินค้าถูกลบแล้วหายไป)
+  unitPrice    number
+  quantity     number (ต่ำสุด 1)
+  subtotal     number (= unitPrice × quantity)
 ```
 
-### Routes → Service
+**สร้างคำสั่งซื้อ ทำงานยังไง? (สำคัญมาก)**
+
 ```
-POST   /api/products              → productsService.create(dto)
-GET    /api/products?search=      → productsService.findAll()   + .populate('shop','name')
-GET    /api/products/shop/:shopId → productsService.findByShop() + .populate('shop','name')
-GET    /api/products/:id          → productsService.findOne()   + .populate('shop','name')
-PATCH  /api/products/:id          → productsService.update(id, dto)
-DELETE /api/products/:id          → productsService.remove(id)
+POST /api/orders
+Body: { shopId, items: [{ productId, quantity }], shippingAddress, note }
+
+1. วน Loop ทุก item:
+   - หาสินค้าใน DB ด้วย productId
+   - ถ้าไม่เจอ หรือ isActive=false → throw NotFoundException
+   - ถ้า stock น้อยกว่า quantity → throw BadRequestException
+   - คำนวณ subtotal = unitPrice × quantity
+   - เก็บ productName ไว้ใน OrderItem (snapshot ณ เวลานั้น)
+
+2. รวม totalAmount = ผลรวม subtotal ทั้งหมด
+
+3. ลด stock สินค้า: product.stock -= quantity
+
+4. สร้าง Order ใน DB ด้วย status='pending'
+
+5. return Order ที่สร้างแล้ว
 ```
 
-`.populate('shop')` = แทน ObjectId ด้วยข้อมูลจริงจาก collection shops:
+**ยกเลิกคำสั่งซื้อ ทำงานยังไง?**
+
+```
+PATCH /api/orders/:id/cancel
+
+1. หา Order ใน DB
+2. ถ้า status เป็น 'delivered' หรือ 'cancelled' แล้ว → throw BadRequestException
+3. คืน stock สินค้า: product.stock += quantity (วน Loop)
+4. เปลี่ยน status เป็น 'cancelled'
+5. return Order ที่ updated
+```
+
+---
+
+## 📄 หน้าเว็บทั้งหมด (Views) — ทำอะไร?
+
+### 1. **LoginView.vue** (`/login`)
+หน้าเข้าสู่ระบบ → ฟอร์ม email+password → กด Login → Backend ตรวจสอบ → ได้ token → redirect /shops
+
+### 2. **AuthCallbackView.vue** (`/auth/callback`)
+หน้ารับ token จาก Google OAuth → Google ส่ง code → ส่งไป Backend → ได้ token → redirect /shops
+
+### 3. **ShopView.vue** (`/shops`)
+หน้ารายการร้านค้า → แสดงตาราง/card ร้าน → Click ชื่อ → ไปหน้า /shops/:id
+- Features: สร้าง/แก้/ลบร้าน, ค้นหา
+- ฟิลด์: shopForm { name, phone, address{}, description }
+
+### 4. **ShopLayout.vue** (ไม่มี routing ตรง)
+Layout ที่ซ้อน router view → แสดง Header ชื่อร้าน → Menu (สินค้า/คำสั่งซื้อ/ลูกค้า/สร้างคำสั่งซื้อ)
+
+### 5. **ShopProductsView.vue** (`/shops/:id`)
+หน้าสินค้าของร้าน → แสดงตาราง/card สินค้า → Click [แก้ไข] → Modal
+- Features: เพิ่ม/แก้/ลบสินค้า, ค้นหา
+- ฟิลด์: productForm { name, description, price, stock, isActive }
+
+### 6. **ShopOrdersView.vue** (`/shops/:id/orders`)
+หน้าคำสั่งซื้อของร้าน → ตาราง Order → Click [ดูบิล] → Modal
+- Features: Filter by status, ดูบิล, เปลี่ยน status, ยกเลิก
+- Logic: countOrders, sumSpent, cancelledCount
+
+### 7. **ShopCreateOrderView.vue** (`/shops/:id/orders/create`)
+หน้าสร้างคำสั่งซื้อ (3 ขั้น)
+- STEP 1: กรอกผู้รับ + ที่อยู่ (5 ฟิลด์)
+- STEP 2: เลือกสินค้า + ปรับ qty
+- STEP 3: เลือกวิธีชำระเงิน + ยืนยัน
+- ฟิลด์: recipient, shippingAddr, orderItems, paymentMethod
+
+### 8. **CustumersView.vue** (`/shops/:id/customers` หรือ `/customers`)
+หน้ารายชื่อลูกค้า → ตาราง/card ลูกค้า → Click ชื่อ → Expand แสดงรายละเอียด
+- Logic: Group customer by name|phone, countOrders, sumSpent, cancelledCount
+- Expand section: ข้อมูลลูกค้า + ออเดอร์
+
+### 9. **ProfileView.vue** (`/profile`)
+หน้าโปรไฟล์ → 3 ส่วน
+- ส่วน 1: ข้อมูล User (Avatar, ชื่อ, Email, Role - ดูเท่านั้น)
+- ส่วน 2: ข้อมูลส่วนตัว (เบอร์โทร - แก้ได้)
+- ส่วน 3: ที่อยู่จัดส่ง (เพิ่ม/แก้/ลบ/ตั้ง default)
+- ฟิลด์: profileForm { phone }, addrForm { label, fullName, phone, address{}, isDefault }
+
+### 10. **DashboardView.vue** (ยังไม่ใช้)
+หน้าแดชบอร์ด → อยู่ในโปรเจ็ค แต่ยังไม่มี routing ชี้มา
+
+---
+
+## Flow การทำงานทั้งระบบ — ทีละขั้น
+
+### สถานการณ์ 1: User เปิดเว็บครั้งแรก
+
+```
+1. เปิด http://localhost:5173
+2. Router Guard เช็ค: มี token ใน localStorage ไหม?
+   - ไม่มี → ไปหน้า /login
+   - มีแต่ยังไม่มีข้อมูล user → เรียก fetchMe() ก่อน
+3. หน้า Login แสดง
+4. User กรอก email + password → กด Login
+5. auth.store.login() → POST /api/auth/login
+6. Backend ตรวจ email+password → สร้าง JWT token
+7. Frontend เก็บ token ใน localStorage
+8. Router พาไป /shops อัตโนมัติ
+```
+
+### สถานการณ์ 2: User ดูร้านค้า
+
+```
+1. หน้า /shops โหลด → ShopView.vue
+2. onMounted → shopStore.fetchAll()
+3. shopStore.fetchAll() → GET /api/shops
+4. Backend → shop.service.findAll() → ค้นหาใน MongoDB
+5. return รายการร้านค้า
+6. Frontend แสดง card ของแต่ละร้าน
+7. User คลิกการ์ดร้าน → router.push('/shops/:id')
+```
+
+### สถานการณ์ 3: User สร้างคำสั่งซื้อ (3 ขั้นตอน)
+
+```
+หน้า /shops/:id/orders/create → ShopCreateOrderView.vue
+
+──── STEP 1: กรอกที่อยู่ผู้รับ ────
+1. หน้าโหลด → ดึงข้อมูลร้าน + รายการสินค้า
+2. User กรอก: ชื่อผู้รับ, เบอร์โทร, ที่อยู่
+3. ตรวจ validate เบอร์โทร (ต้องขึ้น 0, ตัวเลขเท่านั้น, 9-10 หลัก)
+4. กด "ถัดไป" → เก็บข้อมูลใน ref ชั่วคราว (recipient)
+
+──── STEP 2: เลือกสินค้า ────
+5. แสดง card สินค้าทั้งหมดของร้าน
+6. คลิก card → เพิ่มเข้า orderItems (หรือเอาออกถ้าคลิกซ้ำ)
+7. ปรับจำนวนได้ (−/+)
+8. แสดงตารางสรุปและยอดรวม
+9. กด "ถัดไป"
+
+──── STEP 3: ชำระเงิน ────
+10. เลือก โอนเงิน หรือ เก็บเงินปลายทาง
+11. แสดงสรุปทั้งหมด
+12. กด "ยืนยัน" → submitOrder()
+13. สร้าง shippingAddress string:
+    "ผู้รับ: ชื่อ | โทร: เบอร์ | ที่อยู่: ที่อยู่"
+14. สร้าง note string:
+    "ชำระเงิน: โอนเงิน" หรือ "ชำระเงิน: เก็บเงินปลายทาง"
+15. orderStore.createOrder() → POST /api/orders
+16. Backend ตรวจสต็อก → ลดสต็อก → สร้าง Order
+17. router.push('/shops/:id/orders')
+```
+
+### สถานการณ์ 4: User ดูบิลและแก้สถานะ
+
+```
+หน้า /shops/:id/orders → ShopOrdersView.vue
+
+1. โหลดหน้า → ดึงออเดอร์ทั้งหมดของร้านนั้น
+   GET /api/orders?shopId=...
+2. แสดงตารางออเดอร์
+3. User กด "ดูบิล" → billOrder = order (เปิด Modal)
+4. Modal แสดงข้อมูลบิล:
+   - parseShipping(shippingAddress) → แยก ชื่อ/โทร/ที่อยู่ ออกจาก string
+   - parsePayment(note) → แยกวิธีชำระเงินออกจาก string
+5. User เลือก status ใหม่จาก Dropdown
+   → PATCH /api/orders/:id { status: "confirmed" }
+6. User กด "ยกเลิก"
+   → PATCH /api/orders/:id/cancel
+   → Backend คืน stock สินค้าอัตโนมัติ
+```
+
+---
+
+## ข้อมูลไหลอย่างไรระหว่าง Frontend กับ Backend
+
+```
+Frontend (Vue)              Backend (NestJS)          Database (MongoDB)
+     │                           │                          │
+     │  HTTP Request             │                          │
+     │ ─────────────────────────►│                          │
+     │  GET/POST/PATCH/DELETE    │  Controller รับ Request  │
+     │  Header: Bearer token     │         │                │
+     │                           │  Service ประมวลผล       │
+     │                           │         │                │
+     │                           │  Mongoose Query ─────── ►│
+     │                           │         │                │
+     │                           │         │◄──────────────│
+     │  HTTP Response            │         │                │
+     │◄──────────────────────────│  return JSON             │
+     │  JSON data                │                          │
+     │         │                 │                          │
+     │  Store อัพเดต             │                          │
+     │         │                 │                          │
+     │  Vue render หน้าใหม่      │                          │
+```
+
+---
+
+## JWT Token คืออะไร และใช้ยังไง?
+
+JWT = JSON Web Token คือ "บัตรประจำตัว" ที่ Backend สร้างให้หลัง Login
+
+**เนื้อหาข้างใน token (payload):**
 ```json
-"shop": { "_id": "abc123", "name": "ร้านA" }
-```
-
----
-
-## 7. การเชื่อมกันภายใน Backend
-
-```
-AppModule
-  │
-  ├── AuthModule ──── imports ────→ UsersModule
-  │       │                              │
-  │   auth.service ←── inject ──── users.service
-  │       │
-  │   jwt.strategy     (verify token จาก header)
-  │   local.strategy   (verify password ด้วย bcrypt)
-  │   google.strategy  (OAuth กับ Google)
-  │
-  ├── ShopModule
-  │   shop.service ←── MongooseModel(Shop)
-  │
-  └── ProductsModule
-      products.service ←── MongooseModel(Product)
-                                │
-                            .populate('shop') ──→ join shops collection
-```
-
----
-
-## 8. Swagger
-
-- config อยู่ที่: `src/main.ts`
-- เปิดดูที่: `http://localhost:3000/api/docs`
-- รองรับ Bearer Token (JWT)
-- ยังไม่มี `@ApiTags`, `@ApiOperation`, `@ApiProperty` ใน controllers/DTOs
-
----
-
----
-
-# FRONTEND
-
----
-
-## 9. Entry Point — `src/main.ts`
-
-```
-main.ts
-  └── createApp(App)
-  └── app.use(pinia)     ← state management
-  └── app.use(router)    ← Vue Router
-  └── app.mount('#app')
-```
-
----
-
-## 10. Routing — `src/router/index.ts`
-
-```
-/                   → redirect → /products
-/login              → LoginView         (public)
-/auth/callback      → AuthCallbackView  (public, รับ token จาก Google)
-/products           → ProductsView      (ต้อง login)
-/shops              → ShopView          (ต้อง login)
-```
-
-### Route Guard (beforeEach)
-```
-ทุกครั้งที่เปลี่ยนหน้า:
-  1. ถ้ามี token แต่ user = null → fetchMe() เพื่อโหลดข้อมูล user
-  2. ถ้า route ต้องการ auth และ user = null → redirect /login
-```
-
----
-
-## 11. API Config — `src/services/api.ts`
-
-```typescript
-axios.create({
-  baseURL: 'http://localhost:3000/api',
-  headers: { 'Content-Type': 'application/json' }
-})
-```
-
----
-
-## 12. State Management — `src/stores/`
-
-```
-stores/
-  ├── auth.store.ts      ← จัดการ token, user, login, logout
-  ├── product.store.ts   ← จัดการ product list + CRUD
-  └── shop.store.ts      ← จัดการ shop list + CRUD
-```
-
-### auth.store.ts
-```
-state:
-  token  ← โหลดจาก localStorage('token') ตอน init
-  user   ← ข้อมูล user หลัง login
-
-methods:
-  login(email, password)
-    POST /api/auth/login
-    → { access_token, user }
-    → เก็บ token ใน localStorage + state
-
-  register(name, email, password)
-    POST /api/auth/register
-    → { access_token, user }
-    → เก็บ token ใน localStorage + state
-
-  fetchMe()
-    GET /api/auth/me
-    Header: Authorization: Bearer <token>
-    → โหลด user object มาเก็บใน state
-    → ถ้า fail → logout()
-
-  setToken(t)       ← ใช้รับ token จาก Google OAuth callback
-  logout()          ← ล้าง token ใน state + localStorage
-
-computed:
-  isLoggedIn = token != null
-```
-
-### product.store.ts
-```
-state:
-  products: Product[]
-  loading: boolean
-  error: string
-
-methods:
-  fetchAll(search?)   GET  /api/products?search=...
-  createProduct(data) POST /api/products
-  updateProduct(id)   PATCH /api/products/:id
-  removeProduct(id)   DELETE /api/products/:id
-```
-
-### shop.store.ts
-```
-state:
-  shops: Shop[]
-  loading: boolean
-  error: string
-
-methods:
-  fetchAll(search?)  GET  /api/shops?search=...
-  createShop(data)   POST /api/shops
-  updateShop(id)     PATCH /api/shops/:id
-  removeShop(id)     DELETE /api/shops/:id
-```
-
----
-
-## 13. Pages — `src/views/`
-
-### LoginView.vue
-```
-- form email/password
-- toggle Login / Register mode
-- ปุ่ม Google Login → redirect /api/auth/google
-- เรียก authStore.login() หรือ authStore.register()
-- สำเร็จ → push('/products')
-```
-
-### AuthCallbackView.vue
-```
-- รับ token จาก URL: /auth/callback?token=xxxxx
-- เรียก authStore.setToken(token)
-- เรียก authStore.fetchMe()
-- redirect → /products
-```
-
-### ProductsView.vue
-```
-- mount → productStore.fetchAll()
-- search (debounce 500ms) → productStore.fetchAll(search)
-- แสดงตาราง: name, description, price, stock, shop
-- Add → เปิด ProductForm → productStore.createProduct()
-- Edit → เปิด ProductForm (prefill) → productStore.updateProduct()
-- Delete → productStore.removeProduct()
-```
-
-### ShopView.vue
-```
-- mount → shopStore.fetchAll()
-- แสดงรายการร้านค้า
-- Add/Edit/Delete shop → shopStore methods
-- คลิก shop → GET /api/products/shop/:shopId
-  └── แสดง product ของร้านนั้น
-  └── สามารถ Add/Edit/Delete product ของร้านได้
-```
-
----
-
-## 14. Components — `src/components/`
-
-### ProductForm.vue
-```
-Props: editProduct?: Product | null
-Emits: submit(payload), cancel()
-- mount → shopStore.fetchAll() (โหลด shop dropdown)
-- fields: name, description, price, stock, shopId
-```
-
----
-
-## 15. Types — `src/types/`
-
-```typescript
-// product.type.ts
-Product {
-  _id, name, description, price, stock, isActive
-  createdAt, updatedAt
-  shop?: { _id: string; name: string }  ← populated จาก backend
+{
+  "sub": "userId123",
+  "email": "user@gmail.com",
+  "role": "user"
 }
-CreateProductPayload { name, description?, price, stock?, shopId? }
-UpdateProductPayload { name?, description?, price?, stock?, shopId? }
+```
 
-// shop.type.ts
-Shop { _id, name, address, description? }
+**Flow การใช้งาน:**
+```
+1. Login สำเร็จ → ได้ token
+2. เก็บ token ใน localStorage
+3. ทุก request ที่ยิงไป Backend → api.ts แนบ token ไปใน Header อัตโนมัติ
+4. Backend (JwtGuard) → ตรวจ token ว่าถูกต้องไหม
+5. ถ้าถูก → ดึง userId ออกมาจาก token → ส่งต่อให้ Controller
+6. ถ้าผิด → return 401 Unauthorized
 ```
 
 ---
 
+## สรุป API ทั้งหมด
+
+### Auth
+| Method | Path | ต้อง Token | ทำอะไร |
+|--------|------|-----------|--------|
+| POST | /api/auth/register | ❌ | สมัครสมาชิก |
+| POST | /api/auth/login | ❌ | เข้าสู่ระบบ |
+| GET | /api/auth/me | ✅ | ดูข้อมูลตัวเอง |
+| GET | /api/auth/google | ❌ | Login ด้วย Google |
+
+### Users
+| Method | Path | ต้อง Token | ทำอะไร |
+|--------|------|-----------|--------|
+| GET | /api/users/me | ✅ | ดูโปรไฟล์ |
+| PATCH | /api/users/me | ✅ | แก้โปรไฟล์ |
+| POST | /api/users/me/addresses | ✅ | เพิ่มที่อยู่ |
+| PATCH | /api/users/me/addresses/:id | ✅ | แก้ที่อยู่ |
+| DELETE | /api/users/me/addresses/:id | ✅ | ลบที่อยู่ |
+| PATCH | /api/users/me/addresses/:id/default | ✅ | ตั้งที่อยู่หลัก |
+
+### Shops
+| Method | Path | ต้อง Token | ทำอะไร |
+|--------|------|-----------|--------|
+| GET | /api/shops | ❌ | รายการร้านค้าทั้งหมด |
+| POST | /api/shops | ❌ | สร้างร้านค้า |
+| GET | /api/shops/:id | ❌ | ดูร้านค้าชิ้นเดียว |
+| PATCH | /api/shops/:id | ❌ | แก้ร้านค้า |
+| DELETE | /api/shops/:id | ❌ | ลบร้านค้า |
+| GET | /api/shops/:id/customers | ❌ | ดูลูกค้าของร้าน |
+
+### Products
+| Method | Path | ต้อง Token | ทำอะไร |
+|--------|------|-----------|--------|
+| GET | /api/products | ❌ | สินค้าทั้งหมด |
+| POST | /api/products | ❌ | สร้างสินค้า |
+| GET | /api/products/shop/:shopId | ❌ | สินค้าของร้านนั้น |
+| GET | /api/products/:id | ❌ | ดูสินค้าชิ้นเดียว |
+| PATCH | /api/products/:id | ❌ | แก้สินค้า |
+| DELETE | /api/products/:id | ❌ | ลบสินค้า |
+
+### Orders
+| Method | Path | ต้อง Token | ทำอะไร |
+|--------|------|-----------|--------|
+| POST | /api/orders | ✅ | สร้างคำสั่งซื้อ |
+| GET | /api/orders | ✅ | ดูคำสั่งซื้อทั้งหมด |
+| GET | /api/orders/:id | ✅ | ดูคำสั่งซื้อชิ้นเดียว |
+| PATCH | /api/orders/:id | ✅ | แก้ status/note |
+| PATCH | /api/orders/:id/cancel | ✅ | ยกเลิก |
+
 ---
 
-# การเชื่อมกัน Frontend ↔ Backend
+## สถานะ Order มีอะไรบ้าง?
 
----
+```
+pending   → รอดำเนินการ  (เพิ่งสร้าง)
+    ↓
+confirmed → ยืนยันแล้ว
+    ↓
+shipped   → จัดส่งแล้ว
+    ↓
+delivered → ส่งถึงแล้ว  (จบแล้ว ยกเลิกไม่ได้)
 
-## 16. Flow ทั้งหมดแบบ End-to-End
-
-### Login
-```
-[LoginView] กรอก email/password
-    ↓ authStore.login()
-    ↓ POST http://localhost:3000/api/auth/login
-    ↓ [LocalGuard] → local.strategy → validateUser → bcrypt.compare
-    ↓ authService.login() → JwtService.sign()
-    ↓ response: { access_token, user }
-    ↓ เก็บ token → localStorage + pinia state
-    ↓ router.push('/products')
-```
-
-### Google OAuth
-```
-[LoginView] คลิก "Login with Google"
-    ↓ redirect → GET /api/auth/google
-    ↓ [GoogleGuard] → redirect ไป accounts.google.com
-    ↓ user ยืนยัน → Google redirect กลับ /api/auth/google/callback
-    ↓ google.strategy → validateGoogleUser → find/create user ใน DB
-    ↓ authService.login() → สร้าง token
-    ↓ backend redirect → http://localhost:5173/auth/callback?token=xxx
-    ↓ [AuthCallbackView] รับ token → setToken() → fetchMe()
-    ↓ router.push('/products')
-```
-
-### ดึงสินค้า
-```
-[ProductsView] mount
-    ↓ productStore.fetchAll()
-    ↓ GET http://localhost:3000/api/products
-    ↓ productsController.findAll()
-    ↓ productsService.findAll().populate('shop','name')
-    ↓ MongoDB query → products collection + join shops
-    ↓ response: Product[] (มี shop.name ติดมาด้วย)
-    ↓ เก็บใน productStore.products
-    ↓ Vue render ตาราง
-```
-
-### สร้างสินค้า
-```
-[ProductsView] คลิก Add → เปิด ProductForm
-    ↓ ProductForm mount → shopStore.fetchAll() (โหลด shop dropdown)
-    ↓ กรอกข้อมูล submit
-    ↓ productStore.createProduct(payload)
-    ↓ POST http://localhost:3000/api/products  { name, price, shopId, ... }
-    ↓ productsController.create()
-    ↓ productsService.create() → shopId string → ObjectId → save
-    ↓ response: Product ใหม่
-    ↓ เพิ่มเข้า productStore.products
-    ↓ Vue re-render ตาราง
-```
-
-### ดู product ของร้าน (ShopView)
-```
-[ShopView] คลิกเลือกร้าน
-    ↓ GET http://localhost:3000/api/products/shop/:shopId
-    ↓ productsService.findByShop(shopId).populate('shop','name')
-    ↓ response: Product[] ของร้านนั้น
-    ↓ แสดงใน ShopView
-```
-
-### Route Guard (ป้องกัน unauthorized)
-```
-เปลี่ยน route ทุกครั้ง:
-    ↓ router.beforeEach()
-    ↓ ถ้า token อยู่ใน localStorage แต่ user = null
-        → GET /api/auth/me  Header: Authorization: Bearer <token>
-        → jwt.strategy verify token
-        → return { userId, email, role }
-        → เก็บใน authStore.user
-    ↓ ถ้า route requiresAuth และ user = null
-        → redirect /login
+cancelled → ยกเลิกแล้ว  (ยกเลิกได้ทุกสถานะก่อน delivered)
 ```
 
 ---
 
-## 17. สรุปการเชื่อมทั้งหมด
+## เทคโนโลยีที่ใช้
 
-```
-FRONTEND                           BACKEND                        MongoDB
-─────────────────────────────────────────────────────────────────────────
-auth.store
-  login()          ──POST /auth/login──→  LocalGuard
-  register()       ──POST /auth/register→  AuthController
-  fetchMe()        ──GET  /auth/me──────→  JwtGuard            users
-  setToken()       ←──redirect+token────  GoogleStrategy
-                                                ↕
-                                          UsersService  ────────→ users
-
-product.store
-  fetchAll()       ──GET  /products─────→  ProductsController
-  createProduct()  ──POST /products─────→  ProductsService     products
-  updateProduct()  ──PATCH /products/:id→  ProductsService  ←populate→ shops
-  removeProduct()  ──DELETE /products/:id→ ProductsService
-
-shop.store
-  fetchAll()       ──GET  /shops────────→  ShopController
-  createShop()     ──POST /shops────────→  ShopService         shops
-  updateShop()     ──PATCH /shops/:id───→  ShopService
-  removeShop()     ──DELETE /shops/:id──→  ShopService
-
-Token Flow:
-  login → localStorage('token')
-  ทุก request ที่ต้องการ auth → Header: Authorization: Bearer <token>
-  jwt.strategy verify → req.user = { userId, email, role }
-```
-
----
-
-## 18. Swagger
-
-- config: `backend/src/main.ts`
-- เปิดดูที่: `http://localhost:3000/api/docs`
-- รองรับ Bearer Token (JWT)
-- ยังไม่มี `@ApiTags`, `@ApiOperation`, `@ApiProperty` ใน controllers/DTOs
+| ส่วน | เทคโนโลยี | หน้าที่ |
+|------|-----------|---------|
+| Frontend | Vue 3 | สร้าง UI |
+| Frontend | TypeScript | ภาษาที่ใช้เขียน |
+| Frontend | Pinia | จัดการ State |
+| Frontend | Vue Router | จัดการ URL |
+| Frontend | Axios | ยิง HTTP Request |
+| Backend | NestJS | Framework หลังบ้าน |
+| Backend | TypeScript | ภาษาที่ใช้เขียน |
+| Backend | Mongoose | เชื่อมต่อ MongoDB |
+| Backend | Passport | จัดการ Authentication |
+| Backend | JWT | สร้าง/ตรวจ Token |
+| Backend | bcrypt | เข้ารหัสรหัสผ่าน |
+| Database | MongoDB | เก็บข้อมูล |
